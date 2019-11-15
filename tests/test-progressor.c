@@ -33,7 +33,7 @@
 #include <unistd.h>
 
 #include <mercury.h>
-#include <mercury-progressor/mercury-progressor.h>
+#include "mercury-progressor.h"
 
 void checkstat(char *tag, progressor_handle_t *p,
                struct progressor_stats *psp, int rn, int nd, int rf) {
