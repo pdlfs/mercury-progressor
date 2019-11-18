@@ -138,7 +138,18 @@ uint64_t mercury_progressor_nprogress(progressor_handle_t *hand);
 uint64_t mercury_progressor_ntrigger(progressor_handle_t *hand);
 ```
 
-## usage note
+## usage notes
+
+All services that use mercury-progressor must provide an init
+function that takes a progressor_stats as an argument.  The
+progressor_stats argument can be used to access the mercury
+class and context.  Services must document the cases where they
+require a mercury class that has been init'd in "listen" mode
+(i.e. "na_listen == TRUE").  If a service requires mercury to
+be in "listen" mode, it should use HG_Class_is_listening() to
+verify mercury is in the correct mode and fail if not.  Applications
+must init mercury in "listen" mode if any one of the services
+they are using requires "listen" mode.
 
 Since the mercury progress/trigger thread is shared among service
 libraries, there is a good chance that the progress/trigger thread
