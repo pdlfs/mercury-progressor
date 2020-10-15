@@ -75,6 +75,26 @@ progressor_handle_t *mercury_progressor_init(hg_class_t *hgclass,
                                              hg_context_t *hgcontext);
 
 /*
+ * mercury_progressor_get_progtimeout: get the current timeout setting
+ * that is used with HG_Progress() in the timeout loop.
+ *
+ * @param the progressor handle to read the timeout from
+ * @return the current timeout in msec
+ */
+unsigned int mercury_progressor_get_progtimeout(progressor_handle_t *hand);
+
+/*
+ * mercury_progressor_set_progtimeout: set the current timeout (in msec).
+ * used with HG_Progress() in the timeout loop.  the change will
+ * be applied the next time HG_Progress() is called.
+ *
+ * @param the progressor handle to read the timeout from
+ * @param timeout the new timeout value
+ */
+void mercury_progressor_set_progtimeout(progressor_handle_t *hand,
+                                        unsigned int timeout);
+
+/*
  * mercury_progressor_duphandle: allocate a new progressor handle
  * that references the progressor the current handle references.
  * on success, this increases the progressor's reference count by 1.

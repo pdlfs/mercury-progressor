@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, Carnegie Mellon University.
+ * Copyright (c) 2019-2020, Carnegie Mellon University.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -43,6 +43,8 @@
 #include <mercury_thread_condition.h>  /* cond vars and mutex */
 
 #include "mercury-progressor.h"
+
+#define DEF_PROGTIMEOUT 100 /* network progress timeout (HG_Progress) */
 
 /*
  * begin: internal useprobe code
@@ -127,6 +129,9 @@ struct progressor {
     hg_class_t *hg_cls;      /* our class */
     hg_context_t *hg_ctx;    /* our context */
     char *myaddrstring;      /* our local address, malloc'd */
+
+    /* fields that can be read/changed without locking */
+    unsigned int progtimeout;/* HG_Progress timeout value */
 
     /* stats, only prog thread writes.  zeroed each time we start threads */
     struct useprobe usage;   /* time and rusage info */
@@ -272,6 +277,7 @@ static struct progressor *new_progressor() {
     pg = malloc(sizeof(*pg));
     if (!pg) return(NULL);
     memset(pg, 0, sizeof(*pg));
+    pg->progtimeout = DEF_PROGTIMEOUT;
     HG_LIST_INIT(&pg->hlist);
     if (cond_init(&pg->pcv, &pg->plock) < 0) {
         free(pg);
@@ -441,7 +447,7 @@ progressor_handle_t *mercury_progressor_init(hg_class_t *hgclass,
     struct progressor_handle *phand = NULL;
 
     /*
-     * first generate our local address string 
+     * first generate our local address string
      * XXX: some na's only can do this if listening, so restrict it
      */
     if (HG_Class_is_listening(hgclass)) {
@@ -481,6 +487,21 @@ progressor_handle_t *mercury_progressor_init(hg_class_t *hgclass,
     if (pg) free_progressor(pg);
     if (phand) free_handle(phand);
     return(NULL);
+}
+
+/*
+ * mercury_progressor_get_progtimeout: get progtimeout (msec)
+ */
+unsigned int mercury_progressor_get_progtimeout(progressor_handle_t *hand) {
+    return(hand->myprogressor->progtimeout);
+}
+
+/*
+ * mercury_progressor_set_progtimeout: set progtimeout (msec)
+ */
+void mercury_progressor_set_progtimeout(progressor_handle_t *hand,
+                                        unsigned int timeout) {
+    hand->myprogressor->progtimeout = timeout;
 }
 
 /*
@@ -766,7 +787,7 @@ static hg_thread_ret_t progress_main(void *arg) {
             abort();   /* XXX: what else can we do? */
         }
 
-        rv = HG_Progress(ctx, 100);
+        rv = HG_Progress(ctx, pg->progtimeout);
         if (rv != HG_SUCCESS && rv != HG_TIMEOUT) {
             fprintf(stderr, "progress_main: Progress ERROR %s\n",
                     HG_Error_to_string(rv));
