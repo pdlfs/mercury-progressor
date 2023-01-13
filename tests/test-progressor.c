@@ -31,8 +31,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <assert.h>
 
 #include <mercury.h>
+#include <mercury_macros.h>
 #include "mercury-progressor.h"
 #include "config.h"
 
@@ -61,6 +63,44 @@ void checkstat(char *tag, progressor_handle_t *p,
         fprintf(stderr, "progressor stat %s ref check failed\n", tag);
         exit(1);
     }
+}
+
+MERCURY_GEN_PROC(sum_in_t,
+        ((int32_t)(x))\
+        ((int32_t)(y)))
+
+MERCURY_GEN_PROC(sum_out_t, ((int32_t)(ret)))
+
+hg_return_t sum(hg_handle_t handle)
+{
+    hg_return_t ret;
+    sum_in_t in;
+    sum_out_t out;
+
+    const struct hg_info* info = HG_Get_info(handle);
+
+    ret = HG_Get_input(handle, &in);
+    assert(ret == HG_SUCCESS);
+
+    out.ret = in.x + in.y;
+    printf("%d + %d = %d\n", in.x, in.y, in.x+in.y);
+
+    ret = HG_Respond(handle, NULL, NULL, &out);
+    assert(ret == HG_SUCCESS);
+
+    ret = HG_Free_input(handle, &in);
+    assert(ret == HG_SUCCESS);
+
+    ret = HG_Destroy(handle);
+    assert(ret == HG_SUCCESS);
+
+    return HG_SUCCESS;
+}
+
+hg_return_t sum_completed(const struct hg_cb_info *info) {
+    volatile int *completed = info->arg;
+    *completed = 1;
+    return HG_SUCCESS;
 }
 
 int main(int argc, char **argv) {
@@ -92,6 +132,73 @@ int main(int argc, char **argv) {
         exit(1);
     }
     printf("my address: %s\n", mercury_progressor_addrstring(phand));
+
+    // register RPC
+    hg_id_t rpc_id = MERCURY_REGISTER(cls, "sum", sum_in_t, sum_out_t, sum);
+
+    // get self address
+    hg_addr_t self_addr = HG_ADDR_NULL;
+    hg_return_t ret = HG_Addr_self(cls, &self_addr);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Addr_self failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // create RPC handle
+    hg_handle_t handle;
+    ret = HG_Create(ctx, self_addr, rpc_id, &handle);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Create failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // forward RPC
+    sum_in_t in;
+    in.x = 42;
+    in.y = 23;
+    volatile int completed = 0;
+    ret = HG_Forward(handle, sum_completed, (void*)&completed, &in);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Forward failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // ugly active loop
+    while(!completed) { usleep(100); }
+
+    // get output
+    sum_out_t out;
+    ret = HG_Get_output(handle, &out);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Get_output failed (%d)\n", ret);
+        exit(1);
+    }
+
+    if (out.ret != in.x + in.y) {
+        fprintf(stderr, "Output is incorrect\n");
+        exit(1);
+    }
+
+    // free output
+    ret = HG_Free_output(handle, &out);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Destroy failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // free handle
+    ret = HG_Destroy(handle);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Destroy failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // free self address
+    ret = HG_Addr_free(cls, self_addr);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Addr_free failed (%d)\n", ret);
+        exit(1);
+    }
 
     checkstat("check 0", phand, &ps, 0, 0, 1);
 
