@@ -65,17 +65,17 @@ void checkstat(char *tag, progressor_handle_t *p,
     }
 }
 
-MERCURY_GEN_PROC(sum_in_t,
+MERCURY_GEN_PROC(op_in_t,
         ((int32_t)(x))\
         ((int32_t)(y)))
 
-MERCURY_GEN_PROC(sum_out_t, ((int32_t)(ret)))
+MERCURY_GEN_PROC(op_out_t, ((int32_t)(ret)))
 
 hg_return_t sum(hg_handle_t handle)
 {
     hg_return_t ret;
-    sum_in_t in;
-    sum_out_t out;
+    op_in_t in;
+    op_out_t out;
 
     const struct hg_info* info = HG_Get_info(handle);
 
@@ -134,7 +134,7 @@ int main(int argc, char **argv) {
     printf("my address: %s\n", mercury_progressor_addrstring(phand));
 
     // register RPC
-    hg_id_t rpc_id = MERCURY_REGISTER(cls, "sum", sum_in_t, sum_out_t, sum);
+    hg_id_t sum_id = HG_Register_name(cls, "sum", hg_proc_op_in_t, hg_proc_op_out_t, sum);
 
     // get self address
     hg_addr_t self_addr = HG_ADDR_NULL;
@@ -146,14 +146,14 @@ int main(int argc, char **argv) {
 
     // create RPC handle
     hg_handle_t handle;
-    ret = HG_Create(ctx, self_addr, rpc_id, &handle);
+    ret = HG_Create(ctx, self_addr, sum_id, &handle);
     if (ret != HG_SUCCESS) {
         fprintf(stderr, "HG_Create failed (%d)\n", ret);
         exit(1);
     }
 
     // forward RPC
-    sum_in_t in;
+    op_in_t in;
     in.x = 42;
     in.y = 23;
     volatile int completed = 0;
@@ -167,7 +167,7 @@ int main(int argc, char **argv) {
     while(!completed) { usleep(100); }
 
     // get output
-    sum_out_t out;
+    op_out_t out;
     ret = HG_Get_output(handle, &out);
     if (ret != HG_SUCCESS) {
         fprintf(stderr, "HG_Get_output failed (%d)\n", ret);
