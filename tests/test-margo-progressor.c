@@ -32,9 +32,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include <margo.h>
 #include <mercury.h>
 #include "mercury-progressor.h"
-#include "config.h"
 
 void checkstat(char *tag, progressor_handle_t *p,
                struct progressor_stats *psp, int rn, int nd, int rf) {
@@ -42,17 +42,6 @@ void checkstat(char *tag, progressor_handle_t *p,
         fprintf(stderr, "progressor stat %s failed\n", tag);
         exit(1);
     }
-#ifndef ENABLE_MARGO
-    if (psp->is_running != rn) {
-        fprintf(stderr, "progressor stat %s run check failed\n", tag);
-        exit(1);
-    }
-#else
-    if (psp->is_running != 1) {
-        fprintf(stderr, "progressor stat %s run check failed\n", tag);
-        exit(1);
-    }
-#endif
     if (psp->needed != nd) {
         fprintf(stderr, "progressor stat %s need check failed\n", tag);
         exit(1);
@@ -64,33 +53,27 @@ void checkstat(char *tag, progressor_handle_t *p,
 }
 
 int main(int argc, char **argv) {
+    margo_instance_id mid;
     hg_class_t *cls;
     hg_context_t *ctx;
     progressor_handle_t *phand, *duphand;
     struct progressor_stats ps;
 
-    cls = HG_Init("na+sm", HG_TRUE);
-    if (!cls) {
-        fprintf(stderr, "HG_Init failed\n");
+    mid = margo_init("na+sm", MARGO_SERVER_MODE, 1, 1);
+    if (!mid) {
+        fprintf(stderr, "margo_init failed\n");
         exit(1);
     }
 
-    ctx = HG_Context_create(cls);
-    if (!ctx) {
-        fprintf(stderr, "HG_Context_create failed\n");
-        exit(1);
-    }
+    phand = mercury_progressor_init_from_margo(mid);
 
-    phand = mercury_progressor_init(cls, ctx);
     if (!phand) {
-        fprintf(stderr, "mercury_progressor_init failed\n");
+        fprintf(stderr, "mercury_progressor_init_from_margo failed\n");
         exit(1);
     }
-    if (mercury_progressor_hgclass(phand) != cls ||
-        mercury_progressor_hgcontext(phand) != ctx) {
-        fprintf(stderr, "progressor access check failed\n");
-        exit(1);
-    }
+
+    cls = mercury_progressor_hgclass(phand);
+    ctx = mercury_progressor_hgcontext(phand);
     printf("my address: %s\n", mercury_progressor_addrstring(phand));
 
     checkstat("check 0", phand, &ps, 0, 0, 1);
@@ -164,7 +147,7 @@ int main(int argc, char **argv) {
     }
     phand = NULL;
 
-    HG_Context_destroy(ctx);
-    HG_Finalize(cls);
+    margo_finalize(mid);
+
     exit(0);
 }

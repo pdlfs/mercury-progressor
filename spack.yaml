@@ -1,0 +1,20 @@
+# This spack.yaml file can be used to create a spack
+# environment for testing purpose. From inside This
+# directorty:
+#
+# ```
+# $ spack env create -d .
+# $ spack env activate .
+# $ spack install
+# ```
+spack:
+  specs:
+  - cmake
+  - mercury~boostsys ^libfabric fabrics=tcp,rxm
+  - mochi-margo@main
+  concretizer:
+    unify: true
+  modules:
+    prefix_inspections:
+      lib: [LD_LIBRARY_PATH]
+      lib64: [LD_LIBRARY_PATH]

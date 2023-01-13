@@ -39,8 +39,18 @@ endif ()
 set (CMAKE_PREFIX_PATH "" CACHE STRING "External dependencies path")
 set (BUILD_SHARED_LIBS "OFF" CACHE BOOL "Build a shared library")
 
+option (ENABLE_MARGO "Build with Margo support" OFF)
+
 # Find required packages
 find_package (mercury CONFIG REQUIRED)
+
+if (${ENABLE_MARGO})
+  find_package (PkgConfig REQUIRED)
+  pkg_check_modules (margo REQUIRED IMPORTED_TARGET margo)
+  set (EXTRA_LIBS PkgConfig::margo)
+else ()
+  set (EXTRA_LIBS)
+endif ()
 
 add_subdirectory (src)
 add_subdirectory (tests)

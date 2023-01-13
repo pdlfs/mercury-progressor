@@ -12,6 +12,12 @@
 # 29-Oct-2019  chuck@ece.cmu.edu
 #
 
-add_executable(test-progressor test-progressor.c)
-target_link_libraries(test-progressor mercury-progressor)
-add_test(test-progressor test-progressor)
+if (${ENABLE_MARGO})
+  add_executable (test-margo-progressor test-margo-progressor.c)
+  target_link_libraries (test-margo-progressor mercury-progressor)
+  add_test (test-margo-progressor test-margo-progressor)
+endif ()
+
+add_executable (test-progressor test-progressor.c)
+target_link_libraries (test-progressor mercury-progressor)
+add_test (test-progressor test-progressor)
