@@ -31,15 +31,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <assert.h>
 
 #include <margo.h>
 #include <mercury.h>
+#include <mercury_macros.h>
 #include "mercury-progressor.h"
+#include "config.h"
 
 void checkstat(char *tag, progressor_handle_t *p,
                struct progressor_stats *psp, int rn, int nd, int rf) {
     if (mercury_progressor_getstats(p, psp) != HG_SUCCESS) {
         fprintf(stderr, "progressor stat %s failed\n", tag);
+        exit(1);
+    }
+    if (psp->is_running != 1) {
+        fprintf(stderr, "progressor stat %s run check failed\n", tag);
         exit(1);
     }
     if (psp->needed != nd) {
@@ -52,29 +59,217 @@ void checkstat(char *tag, progressor_handle_t *p,
     }
 }
 
+MERCURY_GEN_PROC(op_in_t,
+        ((int32_t)(x))\
+        ((int32_t)(y)))
+
+MERCURY_GEN_PROC(op_out_t, ((int32_t)(ret)))
+
+// sum is a pure-mercury (callback-based) RPC
+hg_return_t sum(hg_handle_t handle)
+{
+    hg_return_t ret;
+    op_in_t in;
+    op_out_t out;
+
+    const struct hg_info* info = HG_Get_info(handle);
+
+    ret = HG_Get_input(handle, &in);
+    assert(ret == HG_SUCCESS);
+
+    out.ret = in.x + in.y;
+    printf("%d + %d = %d\n", in.x, in.y, out.ret);
+
+    ret = HG_Respond(handle, NULL, NULL, &out);
+    assert(ret == HG_SUCCESS);
+
+    ret = HG_Free_input(handle, &in);
+    assert(ret == HG_SUCCESS);
+
+    ret = HG_Destroy(handle);
+    assert(ret == HG_SUCCESS);
+
+    return HG_SUCCESS;
+}
+
+hg_return_t sum_completed(const struct hg_cb_info *info) {
+    volatile int *completed = info->arg;
+    *completed = 1;
+    return HG_SUCCESS;
+}
+
+// prod is a Margo-based RPC
+static void prod(hg_handle_t h)
+{
+    hg_return_t ret;
+
+    op_in_t in;
+    op_out_t out;
+
+    ret = margo_get_input(h, &in);
+    assert(ret == HG_SUCCESS);
+
+    out.ret = in.x * in.y;
+    printf("%d * %d = %d\n", in.x, in.y, out.ret);
+
+    ret = margo_respond(h, &out);
+    assert(ret == HG_SUCCESS);
+
+    ret = margo_free_input(h, &in);
+    assert(ret == HG_SUCCESS);
+
+    ret = margo_destroy(h);
+    assert(ret == HG_SUCCESS);
+
+}
+DEFINE_MARGO_RPC_HANDLER(prod)
+
 int main(int argc, char **argv) {
-    margo_instance_id mid;
     hg_class_t *cls;
     hg_context_t *ctx;
     progressor_handle_t *phand, *duphand;
     struct progressor_stats ps;
 
-    mid = margo_init("na+sm", MARGO_SERVER_MODE, 1, 1);
-    if (!mid) {
-        fprintf(stderr, "margo_init failed\n");
+    cls = HG_Init("na+sm", HG_TRUE);
+    if (!cls) {
+        fprintf(stderr, "HG_Init failed\n");
         exit(1);
     }
 
-    phand = mercury_progressor_init_from_margo(mid);
+    ctx = HG_Context_create(cls);
+    if (!ctx) {
+        fprintf(stderr, "HG_Context_create failed\n");
+        exit(1);
+    }
 
+    phand = mercury_progressor_init(cls, ctx);
     if (!phand) {
-        fprintf(stderr, "mercury_progressor_init_from_margo failed\n");
+        fprintf(stderr, "mercury_progressor_init failed\n");
+        exit(1);
+    }
+    if (mercury_progressor_hgclass(phand) != cls ||
+        mercury_progressor_hgcontext(phand) != ctx) {
+        fprintf(stderr, "progressor access check failed\n");
+        exit(1);
+    }
+    printf("my address: %s\n", mercury_progressor_addrstring(phand));
+
+    margo_instance_id mid = mercury_progressor_mid(phand);
+    if (!mid) {
+        fprintf(stderr, "mercury_progressor_mid failed\n");
         exit(1);
     }
 
-    cls = mercury_progressor_hgclass(phand);
-    ctx = mercury_progressor_hgcontext(phand);
-    printf("my address: %s\n", mercury_progressor_addrstring(phand));
+    // register Mercury-based RPC
+    hg_id_t sum_id = HG_Register_name(cls, "sum", hg_proc_op_in_t, hg_proc_op_out_t, sum);
+
+    // register Margo-based RPC
+    hg_id_t prod_id = MARGO_REGISTER(mid, "prod", op_in_t, op_out_t, prod);
+
+    // get self address
+    hg_addr_t self_addr = HG_ADDR_NULL;
+    hg_return_t ret = HG_Addr_self(cls, &self_addr);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Addr_self failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // create RPC handle for Mercury-based RPC
+    hg_handle_t handle1;
+    ret = HG_Create(ctx, self_addr, sum_id, &handle1);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Create failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // create RPC handle for Margo-based RPC
+    hg_handle_t handle2;
+    ret = margo_create(mid, self_addr, prod_id, &handle2);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "margo_create failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // forward Mercury-based RPC
+    op_in_t in;
+    in.x = 42;
+    in.y = 23;
+    volatile int completed = 0;
+    ret = HG_Forward(handle1, sum_completed, (void*)&completed, &in);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Forward failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // forward Margo-based RPC
+    ret = margo_forward(handle2, &in);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "margo_forward failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // ugly active loop for the Mercury-based RPC
+    while(!completed) { usleep(100); }
+
+    // get output from the Mercury RPC
+    op_out_t out;
+    ret = HG_Get_output(handle1, &out);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Get_output failed (%d)\n", ret);
+        exit(1);
+    }
+
+    if (out.ret != in.x + in.y) {
+        fprintf(stderr, "Output is incorrect\n");
+        exit(1);
+    }
+
+    // free output from the Mercury-based RPC
+    ret = HG_Free_output(handle1, &out);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Free_output failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // free handle from the Mercury-based RPC
+    ret = HG_Destroy(handle1);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Destroy failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // get output from the Margo RPC
+    ret = margo_get_output(handle2, &out);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Get_output failed (%d)\n", ret);
+        exit(1);
+    }
+
+    if (out.ret != in.x * in.y) {
+        fprintf(stderr, "Output is incorrect (margo)\n");
+        exit(1);
+    }
+
+    // free output from the Margo RPC
+    ret = margo_free_output(handle2, &out);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "margo_free_output failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // free handle from the Margo RPC
+    ret = margo_destroy(handle2);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "margo_destroy failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // free self address
+    ret = HG_Addr_free(cls, self_addr);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Addr_free failed (%d)\n", ret);
+        exit(1);
+    }
 
     checkstat("check 0", phand, &ps, 0, 0, 1);
 
@@ -147,7 +342,7 @@ int main(int argc, char **argv) {
     }
     phand = NULL;
 
-    margo_finalize(mid);
-
+    HG_Context_destroy(ctx);
+    HG_Finalize(cls);
     exit(0);
 }
