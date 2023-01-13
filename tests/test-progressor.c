@@ -152,6 +152,9 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
+    // make sure progress loop is runnning
+    mercury_progressor_needed(phand);
+
     // forward RPC
     op_in_t in;
     in.x = 42;
@@ -164,7 +167,7 @@ int main(int argc, char **argv) {
     }
 
     // ugly active loop
-    while(!completed) { usleep(100); }
+    while(!completed) { usleep(100);}
 
     // get output
     op_out_t out;
@@ -199,6 +202,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "HG_Addr_free failed (%d)\n", ret);
         exit(1);
     }
+
+    // stop the progress loop
+    mercury_progressor_idle(phand);
 
     checkstat("check 0", phand, &ps, 0, 0, 1);
 
