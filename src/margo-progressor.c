@@ -69,6 +69,8 @@ progressor_handle_t *mercury_progressor_init_from_margo(margo_instance_id mid) {
     hg_size_t addr_size = 128;
     ret = margo_addr_to_string(mid, self_addr, &addr_size, addr);
     if(ret != HG_SUCCESS) return NULL;
+    ret = margo_addr_free(mid, addr);
+    if(ret != HG_SUCCESS) return NULL;
 
     progressor_handle_t* pgh = calloc(1, sizeof(*pgh));
     pgh->pg = calloc(1, sizeof(*(pgh->pg)));
