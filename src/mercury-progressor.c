@@ -38,7 +38,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <mercury_list.h>              /* for a tailq */
+#include <sys/queue.h>                 /* list */
+
 #include <mercury_thread.h>            /* hg_thread_t */
 #include <mercury_thread_condition.h>  /* cond vars and mutex */
 
@@ -119,7 +120,7 @@ static void useprobe_subusage(struct rusage *rv, struct rusage *r1,
 /*
  * handlist: list of progressor handles
  */
-HG_LIST_HEAD_DECL(handlist, progressor_handle);
+LIST_HEAD(handlist, progressor_handle);
 
 /*
  * progressor: the main structure.
@@ -159,7 +160,7 @@ struct progressor_handle {
     struct progressor *myprogressor;  /* progressor we are a handle for */
 
     /* locked by myprogressor plock */
-    HG_LIST_ENTRY(progressor_handle) hq; /* linkage for hlist */
+    LIST_ENTRY(progressor_handle) hq; /* linkage for hlist */
 
     /* hlock and fields locked by it */
     hg_thread_mutex_t hlock; /* lock for handle */
@@ -278,7 +279,7 @@ static struct progressor *new_progressor() {
     if (!pg) return(NULL);
     memset(pg, 0, sizeof(*pg));
     pg->progtimeout = DEF_PROGTIMEOUT;
-    HG_LIST_INIT(&pg->hlist);
+    LIST_INIT(&pg->hlist);
     if (cond_init(&pg->pcv, &pg->plock) < 0) {
         free(pg);
         return(NULL);
@@ -601,7 +602,7 @@ hg_return_t mercury_progressor_getstats(progressor_handle_t *hand,
         hg_thread_mutex_unlock(&pg->plock);
     } else {
         hand->need_load = 1;
-        HG_LIST_INSERT_HEAD(&pg->hlist, hand, hq);
+        LIST_INSERT_HEAD(&pg->hlist, hand, hq);
         hg_thread_mutex_unlock(&pg->plock);
 
         while (hand->need_load) {
@@ -770,7 +771,7 @@ static hg_thread_ret_t progress_main(void *arg) {
     ctx = pg->hg_ctx;
     useprobe_start(&pg->usage, USEPROBE_THREAD);
     pg->nprogress = pg->ntrigger = 0;
-    HG_LIST_INIT(&pg->hlist);    /* just to be safe, should already be empty */
+    LIST_INIT(&pg->hlist);    /* just to be safe, should already be empty */
     pg->is_running = 1;
     hg_thread_cond_broadcast(&pg->pcv);  /* wake is_running waiters */
     hg_thread_mutex_unlock(&pg->plock);
@@ -796,21 +797,21 @@ static hg_thread_ret_t progress_main(void *arg) {
         pg->nprogress++;
 
         /* check hlist (w/o plock, if we miss we'll get it on next loop) */
-        if (!HG_LIST_IS_EMPTY(&pg->hlist)) {
+        if (!LIST_EMPTY(&pg->hlist)) {
 
             /* first empty hlist into tmplist and update usage */
-            HG_LIST_INIT(&tmplist);
+            LIST_INIT(&tmplist);
             hg_thread_mutex_lock(&pg->plock);
-            while ((hand = HG_LIST_FIRST(&pg->hlist)) != NULL) {
-                HG_LIST_REMOVE(hand, hq);
-                HG_LIST_INSERT_HEAD(&tmplist, hand, hq);
+            while ((hand = LIST_FIRST(&pg->hlist)) != NULL) {
+                LIST_REMOVE(hand, hq);
+                LIST_INSERT_HEAD(&tmplist, hand, hq);
             }
             useprobe_end(&pg->usage);
             hg_thread_mutex_unlock(&pg->plock);
 
             /* tmplist is private to us... copy out usage and wake waiters */
-            while ((hand = HG_LIST_FIRST(&tmplist)) != NULL) {
-                HG_LIST_REMOVE(hand, hq);
+            while ((hand = LIST_FIRST(&tmplist)) != NULL) {
+                LIST_REMOVE(hand, hq);
                 hg_thread_mutex_lock(&hand->hlock);
                 if (hand->ps && hand->need_load) {  /* just to be safe */
                     load_stats(hand->ps, pg);
