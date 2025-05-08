@@ -436,6 +436,16 @@ static void load_stats(struct progressor_stats *ps, struct progressor *pg) {
  * API functions!
  */
 
+progressor_handle_t *mercury_progressor_init_from_margo(margo_instance_id mid) {
+    (void)mid;
+    return NULL;
+}
+
+margo_instance_id mercury_progressor_mid(progressor_handle_t *hand) {
+    (void)hand;
+    return NULL;
+}
+
 /*
  * mercury_progressor_init: allocate and init progressor
  */

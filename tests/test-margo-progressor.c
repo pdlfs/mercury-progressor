@@ -33,6 +33,7 @@
 #include <unistd.h>
 #include <assert.h>
 
+#include <margo.h>
 #include <mercury.h>
 #include <mercury_macros.h>
 #include "mercury-progressor.h"
@@ -44,17 +45,10 @@ void checkstat(char *tag, progressor_handle_t *p,
         fprintf(stderr, "progressor stat %s failed\n", tag);
         exit(1);
     }
-#ifndef ENABLE_MARGO
-    if (psp->is_running != rn) {
-        fprintf(stderr, "progressor stat %s run check failed\n", tag);
-        exit(1);
-    }
-#else
     if (psp->is_running != 1) {
         fprintf(stderr, "progressor stat %s run check failed\n", tag);
         exit(1);
     }
-#endif
     if (psp->needed != nd) {
         fprintf(stderr, "progressor stat %s need check failed\n", tag);
         exit(1);
@@ -71,6 +65,7 @@ MERCURY_GEN_PROC(op_in_t,
 
 MERCURY_GEN_PROC(op_out_t, ((int32_t)(ret)))
 
+// sum is a pure-mercury (callback-based) RPC
 hg_return_t sum(hg_handle_t handle)
 {
     hg_return_t ret;
@@ -83,7 +78,7 @@ hg_return_t sum(hg_handle_t handle)
     assert(ret == HG_SUCCESS);
 
     out.ret = in.x + in.y;
-    printf("%d + %d = %d\n", in.x, in.y, in.x+in.y);
+    printf("%d + %d = %d\n", in.x, in.y, out.ret);
 
     ret = HG_Respond(handle, NULL, NULL, &out);
     assert(ret == HG_SUCCESS);
@@ -102,6 +97,32 @@ hg_return_t sum_completed(const struct hg_cb_info *info) {
     *completed = 1;
     return HG_SUCCESS;
 }
+
+// prod is a Margo-based RPC
+static void prod(hg_handle_t h)
+{
+    hg_return_t ret;
+
+    op_in_t in;
+    op_out_t out;
+
+    ret = margo_get_input(h, &in);
+    assert(ret == HG_SUCCESS);
+
+    out.ret = in.x * in.y;
+    printf("%d * %d = %d\n", in.x, in.y, out.ret);
+
+    ret = margo_respond(h, &out);
+    assert(ret == HG_SUCCESS);
+
+    ret = margo_free_input(h, &in);
+    assert(ret == HG_SUCCESS);
+
+    ret = margo_destroy(h);
+    assert(ret == HG_SUCCESS);
+
+}
+DEFINE_MARGO_RPC_HANDLER(prod)
 
 int main(int argc, char **argv) {
     hg_class_t *cls;
@@ -133,8 +154,17 @@ int main(int argc, char **argv) {
     }
     printf("my address: %s\n", mercury_progressor_addrstring(phand));
 
-    // register RPC
+    margo_instance_id mid = mercury_progressor_mid(phand);
+    if (!mid) {
+        fprintf(stderr, "mercury_progressor_mid failed\n");
+        exit(1);
+    }
+
+    // register Mercury-based RPC
     hg_id_t sum_id = HG_Register_name(cls, "sum", hg_proc_op_in_t, hg_proc_op_out_t, sum);
+
+    // register Margo-based RPC
+    hg_id_t prod_id = MARGO_REGISTER(mid, "prod", op_in_t, op_out_t, prod);
 
     // get self address
     hg_addr_t self_addr = HG_ADDR_NULL;
@@ -144,34 +174,46 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    // create RPC handle
-    hg_handle_t handle;
-    ret = HG_Create(ctx, self_addr, sum_id, &handle);
+    // create RPC handle for Mercury-based RPC
+    hg_handle_t handle1;
+    ret = HG_Create(ctx, self_addr, sum_id, &handle1);
     if (ret != HG_SUCCESS) {
         fprintf(stderr, "HG_Create failed (%d)\n", ret);
         exit(1);
     }
 
-    // make sure progress loop is runnning
-    mercury_progressor_needed(phand);
+    // create RPC handle for Margo-based RPC
+    hg_handle_t handle2;
+    ret = margo_create(mid, self_addr, prod_id, &handle2);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "margo_create failed (%d)\n", ret);
+        exit(1);
+    }
 
-    // forward RPC
+    // forward Mercury-based RPC
     op_in_t in;
     in.x = 42;
     in.y = 23;
     volatile int completed = 0;
-    ret = HG_Forward(handle, sum_completed, (void*)&completed, &in);
+    ret = HG_Forward(handle1, sum_completed, (void*)&completed, &in);
     if (ret != HG_SUCCESS) {
         fprintf(stderr, "HG_Forward failed (%d)\n", ret);
         exit(1);
     }
 
-    // ugly active loop
-    while(!completed) { usleep(100);}
+    // forward Margo-based RPC
+    ret = margo_forward(handle2, &in);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "margo_forward failed (%d)\n", ret);
+        exit(1);
+    }
 
-    // get output
+    // ugly active loop for the Mercury-based RPC
+    while(!completed) { usleep(100); }
+
+    // get output from the Mercury RPC
     op_out_t out;
-    ret = HG_Get_output(handle, &out);
+    ret = HG_Get_output(handle1, &out);
     if (ret != HG_SUCCESS) {
         fprintf(stderr, "HG_Get_output failed (%d)\n", ret);
         exit(1);
@@ -182,17 +224,43 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    // free output
-    ret = HG_Free_output(handle, &out);
+    // free output from the Mercury-based RPC
+    ret = HG_Free_output(handle1, &out);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "HG_Free_output failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // free handle from the Mercury-based RPC
+    ret = HG_Destroy(handle1);
     if (ret != HG_SUCCESS) {
         fprintf(stderr, "HG_Destroy failed (%d)\n", ret);
         exit(1);
     }
 
-    // free handle
-    ret = HG_Destroy(handle);
+    // get output from the Margo RPC
+    ret = margo_get_output(handle2, &out);
     if (ret != HG_SUCCESS) {
-        fprintf(stderr, "HG_Destroy failed (%d)\n", ret);
+        fprintf(stderr, "HG_Get_output failed (%d)\n", ret);
+        exit(1);
+    }
+
+    if (out.ret != in.x * in.y) {
+        fprintf(stderr, "Output is incorrect (margo)\n");
+        exit(1);
+    }
+
+    // free output from the Margo RPC
+    ret = margo_free_output(handle2, &out);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "margo_free_output failed (%d)\n", ret);
+        exit(1);
+    }
+
+    // free handle from the Margo RPC
+    ret = margo_destroy(handle2);
+    if (ret != HG_SUCCESS) {
+        fprintf(stderr, "margo_destroy failed (%d)\n", ret);
         exit(1);
     }
 
@@ -202,9 +270,6 @@ int main(int argc, char **argv) {
         fprintf(stderr, "HG_Addr_free failed (%d)\n", ret);
         exit(1);
     }
-
-    // stop the progress loop
-    mercury_progressor_idle(phand);
 
     checkstat("check 0", phand, &ps, 0, 0, 1);
 

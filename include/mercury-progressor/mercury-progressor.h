@@ -40,6 +40,8 @@
 
 typedef struct progressor_handle progressor_handle_t;
 
+typedef struct margo_instance* margo_instance_id; /* avoid including margo.h if not present */
+
 /*
  * progressor_stats: run stats for a progressor and its handle.
  * note that the stats are zeroed each time the threads are started.
@@ -73,6 +75,22 @@ extern "C" {
  */
 progressor_handle_t *mercury_progressor_init(hg_class_t *hgclass,
                                              hg_context_t *hgcontext);
+
+/**
+ * mercury_progressor_init_from_margo: allocate and init a mercury
+ * progressor and return a handle to it.  The progressor will be
+ * created from a margo instance. Contrary to mercury_progressor_init,
+ * which does nto start the progress thread, the margo instance will
+ * already have a running progress thread.
+ *
+ * If mercury-progressor has not been built with Margo support,
+ * this function will fail and return NULL.
+ *
+ * @param mid margo instance to associate with the processor
+ *
+ * @return handle to progressor, or NULL (for allocation error)
+ */
+progressor_handle_t *mercury_progressor_init_from_margo(margo_instance_id mid);
 
 /*
  * mercury_progressor_get_progtimeout: get the current timeout setting
@@ -177,6 +195,19 @@ hg_class_t *mercury_progressor_hgclass(progressor_handle_t *hand);
  * @return the hgcontext
  */
 hg_context_t *mercury_progressor_hgcontext(progressor_handle_t *hand);
+
+/*
+ * mercury_progressor_hgclass: return margo_instance_id associated with
+ * the progressor our handle points to.  clients can safely cache
+ * the return value while the progressor is allocated.
+ *
+ * If mercury-progressor was not build with Margo support, this function
+ * will return NULL.
+ *
+ * @param hand the progressor handle of interest
+ * @return the margo_instance_id
+ */
+margo_instance_id mercury_progressor_mid(progressor_handle_t *hand);
 
 /*
  * mercury_progressor_addrstring: return pointer to a C string containing
